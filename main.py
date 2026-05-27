@@ -1,0 +1,585 @@
+from pathlib import Path
+from datetime import datetime
+import json
+import os
+import random
+import sqlite3
+import string
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+import socketio
+
+try:
+    from google import genai
+except Exception:
+    genai = None
+
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATE_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static"
+DB_PATH = BASE_DIR / "studybuddy.db"
+
+load_dotenv(BASE_DIR / ".env")
+
+gemini_key = os.getenv("GEMINI_KEY")
+gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+if genai and gemini_key:
+    try:
+        ai_client = genai.Client(api_key=gemini_key)
+        print("Gemini ready")
+    except Exception as exc:
+        print(f"Gemini setup failed: {exc}")
+        ai_client = None
+else:
+    ai_client = None
+    print("Gemini not configured")
+
+sio = socketio.AsyncServer(
+    async_mode="asgi",
+    cors_allowed_origins="*",
+    max_http_buffer_size=20_000_000,
+    logger=False,
+    engineio_logger=False,
+)
+
+app = FastAPI(title="Study Buddy")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+socket_app = socketio.ASGIApp(sio, app)
+
+room_connections = {}
+sid_index = {}
+
+
+def connect_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def make_room_code():
+    return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+
+def init_db():
+    conn = connect_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS rooms (
+            code TEXT PRIMARY KEY,
+            host TEXT,
+            subject TEXT,
+            members TEXT,
+            messages TEXT,
+            created_at TEXT,
+            active INTEGER DEFAULT 1
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS waiting_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_name TEXT,
+            user_email TEXT,
+            subject TEXT,
+            joined_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS match_results (
+            user_email TEXT PRIMARY KEY,
+            room_code TEXT,
+            subject TEXT,
+            members TEXT,
+            created_at TEXT
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def create_unique_room(cur):
+    for _ in range(20):
+        code = make_room_code()
+        cur.execute("SELECT code FROM rooms WHERE code = ?", (code,))
+        if not cur.fetchone():
+            return code
+    raise RuntimeError("Could not create unique room code")
+
+
+def clean_user(data):
+    name = (data.get("user_name") or data.get("name") or "Student").strip()
+    email = (data.get("user_email") or data.get("email") or "").strip().lower()
+    subject = (data.get("subject") or "Other").strip()
+
+    if not email:
+        safe_name = "".join(ch for ch in name.lower() if ch.isalnum()) or "guest"
+        email = f"{safe_name}-{random.randint(1000, 9999)}@guest.local"
+
+    return name, email, subject
+
+
+def template(name):
+    return FileResponse(TEMPLATE_DIR / name)
+
+
+init_db()
+print("Database ready")
+
+
+async def emit_room_users(room_code):
+    users = []
+    for email, info in room_connections.get(room_code, {}).items():
+        users.append({"email": email, "name": info.get("name") or email.split("@")[0]})
+
+    await sio.emit("room-users", {"users": users, "total": len(users)}, room=room_code)
+
+
+@sio.event
+async def connect(sid, environ):
+    print(f"Socket connected: {sid}")
+
+
+@sio.event
+async def disconnect(sid):
+    old = sid_index.pop(sid, None)
+    if not old:
+        print(f"Socket disconnected: {sid}")
+        return
+
+    room_code, email = old
+    entry = room_connections.get(room_code, {}).get(email)
+
+    if entry and entry.get("sid") == sid:
+        del room_connections[room_code][email]
+
+    if room_code in room_connections and not room_connections[room_code]:
+        del room_connections[room_code]
+
+    await emit_room_users(room_code)
+    await sio.emit("user-left", {"email": email}, room=room_code)
+    print(f"Socket disconnected: {sid}")
+
+
+@sio.event
+async def join_room_signal(sid, data):
+    room_code = (data.get("room_code") or "").upper().strip()
+    user_name = (data.get("user_name") or "Student").strip()
+    user_email = (data.get("user_email") or "").lower().strip()
+
+    if not room_code or not user_email:
+        return
+
+    await sio.enter_room(sid, room_code)
+
+    room_connections.setdefault(room_code, {})
+    room_connections[room_code][user_email] = {"sid": sid, "name": user_name}
+    sid_index[sid] = (room_code, user_email)
+
+    await emit_room_users(room_code)
+
+
+@sio.event
+async def leave_room_signal(sid, data):
+    room_code = (data.get("room_code") or "").upper().strip()
+    user_email = (data.get("user_email") or "").lower().strip()
+
+    if room_code:
+        await sio.leave_room(sid, room_code)
+
+    if room_code in room_connections and user_email in room_connections[room_code]:
+        del room_connections[room_code][user_email]
+
+    sid_index.pop(sid, None)
+    await emit_room_users(room_code)
+    await sio.emit("user-left", {"email": user_email}, room=room_code)
+
+
+@sio.event
+async def webrtc_offer(sid, data):
+    room_code = (data.get("room_code") or "").upper().strip()
+    target = (data.get("target") or "").lower().strip()
+
+    target_info = room_connections.get(room_code, {}).get(target)
+    if not target_info:
+        return
+
+    await sio.emit(
+        "webrtc_offer",
+        {
+            "offer": data.get("offer"),
+            "from_name": data.get("from_name"),
+            "from_email": data.get("from_email"),
+        },
+        to=target_info["sid"],
+    )
+
+
+@sio.event
+async def webrtc_answer(sid, data):
+    room_code = (data.get("room_code") or "").upper().strip()
+    target = (data.get("target") or "").lower().strip()
+
+    target_info = room_connections.get(room_code, {}).get(target)
+    if not target_info:
+        return
+
+    await sio.emit(
+        "webrtc_answer",
+        {
+            "answer": data.get("answer"),
+            "from_name": data.get("from_name"),
+            "from_email": data.get("from_email"),
+        },
+        to=target_info["sid"],
+    )
+
+
+@sio.event
+async def webrtc_ice_candidate(sid, data):
+    room_code = (data.get("room_code") or "").upper().strip()
+    target = (data.get("target") or "").lower().strip()
+
+    target_info = room_connections.get(room_code, {}).get(target)
+    if not target_info:
+        return
+
+    await sio.emit(
+        "webrtc_ice_candidate",
+        {
+            "candidate": data.get("candidate"),
+            "from_name": data.get("from_name"),
+            "from_email": data.get("from_email"),
+        },
+        to=target_info["sid"],
+    )
+
+
+@sio.event
+async def chat_message_socket(sid, data):
+    room_code = (data.get("room_code") or "").upper().strip()
+    if not room_code:
+        return
+
+    msg = {
+        "user": data.get("user_name") or "Student",
+        "text": data.get("text") or "",
+        "type": data.get("type") or "message",
+        "fileName": data.get("file_name") or "",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    conn = connect_db()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT messages FROM rooms WHERE code = ?", (room_code,))
+        room = cur.fetchone()
+        if room:
+            messages = json.loads(room["messages"] or "[]")
+            messages.append(msg)
+            messages = messages[-200:]
+            cur.execute(
+                "UPDATE rooms SET messages = ? WHERE code = ?",
+                (json.dumps(messages), room_code),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+    await sio.emit("new-message", msg, room=room_code)
+
+
+@app.get("/")
+async def home():
+    return template("home.html")
+
+
+@app.get("/login")
+async def login():
+    return template("login.html")
+
+
+@app.get("/study")
+async def study():
+    return template("study.html")
+
+
+@app.get("/room/{room_code}")
+async def room_redirect(room_code: str):
+    return template("room.html")
+
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "ai": ai_client is not None}
+
+
+@app.get("/ai/ask")
+async def ask_ai(question: str):
+    if not ai_client:
+        return {"success": False, "error": "AI is not configured. Add GEMINI_KEY to .env."}
+
+    try:
+        response = ai_client.models.generate_content(
+            model=gemini_model,
+            contents=f"You are a helpful study tutor. Answer clearly:\n\n{question}",
+        )
+        return {"success": True, "answer": response.text}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+@app.post("/verify-student")
+async def verify_student(request: Request):
+    data = await request.json()
+    email = (data.get("email") or "").lower()
+    edu_markers = [".edu", ".ac.uk", ".edu.in", "student.", "university.", "college.", ".ac."]
+    return {"success": True, "verified": any(marker in email for marker in edu_markers)}
+
+
+@app.post("/match/join-queue")
+async def join_queue(request: Request):
+    data = await request.json()
+    user_name, user_email, subject = clean_user(data)
+
+    conn = connect_db()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT * FROM match_results WHERE user_email = ?", (user_email,))
+        existing = cur.fetchone()
+
+        if existing:
+            cur.execute("DELETE FROM match_results WHERE user_email = ?", (user_email,))
+            conn.commit()
+            return {
+                "success": True,
+                "matched": True,
+                "room_code": existing["room_code"],
+                "subject": existing["subject"],
+                "members": json.loads(existing["members"] or "[]"),
+            }
+
+        cur.execute("DELETE FROM waiting_queue WHERE user_email = ?", (user_email,))
+        cur.execute(
+            """
+            INSERT INTO waiting_queue (user_name, user_email, subject, joined_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (user_name, user_email, subject, datetime.now().isoformat()),
+        )
+
+        cur.execute(
+            """
+            SELECT user_name, user_email, subject
+            FROM waiting_queue
+            WHERE subject = ?
+            ORDER BY joined_at ASC
+            """,
+            (subject,),
+        )
+        waiting = cur.fetchall()
+
+        if len(waiting) >= 2:
+            group = waiting[:3] if len(waiting) >= 3 else waiting[:2]
+            members = [
+                {"name": row["user_name"], "email": row["user_email"], "subject": row["subject"]}
+                for row in group
+            ]
+
+            room_code = create_unique_room(cur)
+            cur.execute(
+                """
+                INSERT INTO rooms (code, host, subject, members, messages, created_at, active)
+                VALUES (?, ?, ?, ?, ?, ?, 1)
+                """,
+                (
+                    room_code,
+                    members[0]["name"],
+                    subject,
+                    json.dumps(members),
+                    json.dumps([]),
+                    datetime.now().isoformat(),
+                ),
+            )
+
+            for member in members:
+                cur.execute("DELETE FROM waiting_queue WHERE user_email = ?", (member["email"],))
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO match_results
+                    (user_email, room_code, subject, members, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        member["email"],
+                        room_code,
+                        subject,
+                        json.dumps(members),
+                        datetime.now().isoformat(),
+                    ),
+                )
+
+            cur.execute("DELETE FROM match_results WHERE user_email = ?", (user_email,))
+            conn.commit()
+
+            return {
+                "success": True,
+                "matched": True,
+                "room_code": room_code,
+                "subject": subject,
+                "members": members,
+            }
+
+        conn.commit()
+        return {
+            "success": True,
+            "matched": False,
+            "waiting": len(waiting),
+            "message": f"Waiting for another {subject} student... ({len(waiting)}/2)",
+        }
+    except Exception as exc:
+        conn.rollback()
+        return {"success": False, "error": str(exc)}
+    finally:
+        conn.close()
+
+
+@app.post("/match/leave-queue")
+async def leave_queue(request: Request):
+    data = await request.json()
+    user_email = (data.get("user_email") or "").lower().strip()
+
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM waiting_queue WHERE user_email = ?", (user_email,))
+    conn.commit()
+    conn.close()
+
+    return {"success": True}
+
+
+@app.get("/match/queue-count")
+async def queue_count():
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) AS count FROM waiting_queue")
+    count = cur.fetchone()["count"]
+    conn.close()
+    return {"count": count}
+
+
+@app.post("/room/create")
+async def create_room(request: Request):
+    data = await request.json()
+    user_name, user_email, subject = clean_user(data)
+
+    conn = connect_db()
+    cur = conn.cursor()
+
+    try:
+        room_code = create_unique_room(cur)
+        members = [{"name": user_name, "email": user_email, "subject": subject}]
+
+        cur.execute(
+            """
+            INSERT INTO rooms (code, host, subject, members, messages, created_at, active)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
+            """,
+            (
+                room_code,
+                user_name,
+                subject,
+                json.dumps(members),
+                json.dumps([]),
+                datetime.now().isoformat(),
+            ),
+        )
+
+        conn.commit()
+        return {"success": True, "room_code": room_code}
+    finally:
+        conn.close()
+
+
+@app.post("/room/join")
+async def join_room(request: Request):
+    data = await request.json()
+    user_name, user_email, subject = clean_user(data)
+    room_code = (data.get("room_code") or "").upper().strip()
+
+    conn = connect_db()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT * FROM rooms WHERE code = ? AND active = 1", (room_code,))
+        room = cur.fetchone()
+
+        if not room:
+            return {"success": False, "error": "Room not found"}
+
+        members = json.loads(room["members"] or "[]")
+
+        if any(member.get("email") == user_email for member in members):
+            return {"success": True, "room_code": room_code}
+
+        if len(members) >= 3:
+            return {"success": False, "error": "Room full. Maximum 3 students allowed."}
+
+        members.append({"name": user_name, "email": user_email, "subject": subject})
+        cur.execute(
+            "UPDATE rooms SET members = ? WHERE code = ?",
+            (json.dumps(members), room_code),
+        )
+
+        conn.commit()
+        return {"success": True, "room_code": room_code}
+    finally:
+        conn.close()
+
+
+@app.get("/room/{room_code}/info")
+async def get_room_info(room_code: str):
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM rooms WHERE code = ? AND active = 1", (room_code.upper(),))
+    room = cur.fetchone()
+    conn.close()
+
+    if not room:
+        return {"success": False, "error": "Room not found"}
+
+    return {
+        "success": True,
+        "room": {
+            "code": room["code"],
+            "host": room["host"],
+            "subject": room["subject"],
+            "members": json.loads(room["members"] or "[]"),
+        },
+    }
+
+
+@app.get("/chat/{room_code}")
+async def get_messages(room_code: str):
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("SELECT messages FROM rooms WHERE code = ? AND active = 1", (room_code.upper(),))
+    room = cur.fetchone()
+    conn.close()
+
+    return {"success": True, "messages": json.loads(room["messages"] or "[]") if room else []}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    print("Study Buddy server: http://127.0.0.1:8000")
+    uvicorn.run(socket_app, host="127.0.0.1", port=8000)

@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.pyc
+studybuddy.db
+firebase-key.json
+venv/
+.venv/
+
+# add these
+.DS_Store
+*.log
+.env.local
+.env.production
