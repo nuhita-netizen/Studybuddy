@@ -7,7 +7,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Sora:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         :root {
@@ -18,8 +17,14 @@
             --radius: 14px;
         }
         body {
-            font-family: var(--font-body); background: var(--bg); color: var(--text);
-            min-height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden;
+            font-family: var(--font-body);
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
         }
         body::before {
             content: ''; position: fixed; inset: 0;
@@ -69,7 +74,8 @@
         .panel-copy { font-size: 13.5px; color: var(--text-muted); font-weight: 300; }
     </style>
 </head>
-<body class="app-shell" data-page="room">
+<!-- FIX: removed class="app-shell" — body.app-shell in style.css was overriding the background with a purple gradient due to higher CSS specificity -->
+<body data-page="room">
     <main class="center-page">
         <section class="panel login-card">
             <div class="spinner"></div>

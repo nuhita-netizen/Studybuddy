@@ -7,7 +7,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Sora:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         :root {
@@ -21,8 +20,12 @@
             --glow-accent: 0 0 32px rgba(240,160,48,0.18);
         }
         body {
-            font-family: var(--font-body); background: var(--bg); color: var(--text);
-            min-height: 100vh; font-size: 15px; line-height: 1.65;
+            font-family: var(--font-body);
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            font-size: 15px;
+            line-height: 1.65;
         }
         body::before {
             content: ''; position: fixed; inset: 0;
@@ -30,6 +33,13 @@
                 linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
             background-size: 40px 40px; pointer-events: none;
+        }
+        body::after {
+            content: ''; position: fixed;
+            top: -200px; right: -100px;
+            width: 600px; height: 600px;
+            background: radial-gradient(circle, rgba(240,160,48,0.06) 0%, transparent 70%);
+            pointer-events: none;
         }
         .hidden { display: none !important; }
         .center-page {
@@ -83,7 +93,8 @@
         .queue-note a:hover { text-decoration: underline; }
     </style>
 </head>
-<body class="app-shell" data-page="login">
+<!-- FIX: removed class="app-shell" — body.app-shell in style.css was overriding the background with a purple gradient due to higher CSS specificity -->
+<body data-page="login">
     <main class="center-page">
         <section class="panel login-card">
             <div class="brand" style="margin-bottom: 28px;">

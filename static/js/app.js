@@ -245,7 +245,8 @@
             const meta = document.createElement("div");
             meta.className = "note-history-meta";
             const date = note.createdAt ? new Date(note.createdAt) : new Date();
-            meta.textContent = `${date.toLocaleDateString()} · Room ${note.roomCode || "------"}`;
+            const sharedByText = note.sharedBy ? ` · by ${note.sharedBy}` : "";
+            meta.textContent = `${date.toLocaleDateString()} · Room ${note.roomCode || "------"}${sharedByText}`;
 
             card.appendChild(title);
             card.appendChild(preview);
@@ -1122,19 +1123,11 @@
                 file_name: title
             });
 
+            // NOTE: saveNoteForUser is now handled inside socket.on("new-message")
+            // so ALL room members (including sender) get the note saved exactly once.
             studyStats.notesShared += 1;
             markStudyDay();
             saveStudyStats();
-            saveNoteForUser(
-                { email: userEmail },
-                {
-                    title,
-                    content,
-                    roomCode,
-                    subject: userSubject,
-                    createdAt: new Date().toISOString()
-                }
-            );
 
             $("note-title").value = "";
             $("note-content").value = "";
@@ -1226,6 +1219,23 @@
 
             socket.on("new-message", (data) => {
                 addChatMessage(data.user, data.text, data.type, data.fileName);
+
+                // FIX: Save notes for EVERY room member (sender + receivers) exactly once.
+                // shareNote() no longer calls saveNoteForUser so this is the single save
+                // point — meaning all participants get shared notes in their Notes History.
+                if (data.type === "note") {
+                    saveNoteForUser(
+                        { email: userEmail },
+                        {
+                            title: data.fileName || `${data.user}'s Note`,
+                            content: data.text,
+                            roomCode,
+                            subject: userSubject,
+                            sharedBy: data.user,
+                            createdAt: new Date().toISOString()
+                        }
+                    );
+                }
             });
         }
 

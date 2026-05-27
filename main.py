@@ -321,19 +321,108 @@ async def health():
     return {"status": "healthy", "ai": ai_client is not None}
 
 
+# FIX: added subject param so the AI tutor knows the context
 @app.get("/ai/ask")
-async def ask_ai(question: str):
+async def ask_ai(question: str, subject: str = "General"):
     if not ai_client:
         return {"success": False, "error": "AI is not configured. Add GEMINI_KEY to .env."}
 
     try:
         response = ai_client.models.generate_content(
             model=gemini_model,
-            contents=f"You are a helpful study tutor. Answer clearly:\n\n{question}",
+            contents=f"You are a helpful {subject} tutor. Answer clearly:\n\n{question}",
         )
         return {"success": True, "answer": response.text}
     except Exception as exc:
         return {"success": False, "error": str(exc)}
+
+
+# FIX: missing endpoint — frontend calls POST /ai/summarize-room
+@app.post("/ai/summarize-room")
+async def summarize_room(request: Request):
+    data = await request.json()
+    room_code = (data.get("room_code") or "").upper().strip()
+
+    if not ai_client:
+        return {"success": False, "summary": "AI is not configured. Add GEMINI_KEY to .env."}
+
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("SELECT messages FROM rooms WHERE code = ? AND active = 1", (room_code,))
+    room = cur.fetchone()
+    conn.close()
+
+    if not room:
+        return {"success": False, "summary": "Room not found."}
+
+    messages = json.loads(room["messages"] or "[]")
+    if not messages:
+        return {"success": True, "summary": "No messages to summarize yet."}
+
+    chat_text = "\n".join(
+        f"{m.get('user', 'Student')}: {m.get('text', '')}"
+        for m in messages[-50:]
+        if m.get("type") == "message"
+    )
+
+    try:
+        response = ai_client.models.generate_content(
+            model=gemini_model,
+            contents=f"Summarize this study room chat concisely. List the main topics discussed and any key points:\n\n{chat_text}",
+        )
+        return {"success": True, "summary": response.text}
+    except Exception as exc:
+        return {"success": False, "summary": str(exc)}
+
+
+# FIX: missing endpoint — frontend calls POST /ai/quiz
+@app.post("/ai/quiz")
+async def generate_quiz(request: Request):
+    data = await request.json()
+    subject = (data.get("subject") or "General").strip()
+    topic = (data.get("topic") or subject).strip()
+    difficulty = (data.get("difficulty") or "medium").strip()
+
+    if not ai_client:
+        return {"success": False, "quiz": "AI is not configured. Add GEMINI_KEY to .env."}
+
+    try:
+        response = ai_client.models.generate_content(
+            model=gemini_model,
+            contents=(
+                f"Create a {difficulty} difficulty quiz with 3 questions on the topic '{topic}' "
+                f"for the subject {subject}. Number each question. "
+                "After each question, provide the answer on a new line starting with 'Answer:'."
+            ),
+        )
+        return {"success": True, "quiz": response.text}
+    except Exception as exc:
+        return {"success": False, "quiz": str(exc)}
+
+
+# FIX: missing endpoint — frontend calls POST /ai/study-plan
+@app.post("/ai/study-plan")
+async def generate_study_plan(request: Request):
+    data = await request.json()
+    subject = (data.get("subject") or "General").strip()
+    goal = (data.get("goal") or subject).strip()
+    minutes = int(data.get("minutes") or 45)
+
+    if not ai_client:
+        return {"success": False, "plan": "AI is not configured. Add GEMINI_KEY to .env."}
+
+    try:
+        response = ai_client.models.generate_content(
+            model=gemini_model,
+            contents=(
+                f"Create a {minutes}-minute study plan for the goal: '{goal}' (subject: {subject}). "
+                "Break it into clear timed blocks with specific tasks for each block. "
+                "Keep it practical and achievable."
+            ),
+        )
+        return {"success": True, "plan": response.text}
+    except Exception as exc:
+        return {"success": False, "plan": str(exc)}
 
 
 @app.post("/verify-student")

@@ -72,12 +72,6 @@
 
         .hidden { display: none !important; }
 
-        /* FIX 1: app-shell is now a wrapper div, not on body */
-        .app-shell {
-            position: relative;
-            z-index: 1;
-        }
-
         .topbar {
             position: sticky;
             top: 0;
@@ -413,7 +407,6 @@
             background-repeat: no-repeat; background-position: right 14px center;
         }
 
-        /* FIX 2: style disabled placeholder option */
         select#match-subject option[value=""] { color: var(--text-faint); }
 
         .status {
@@ -464,137 +457,116 @@
             background: linear-gradient(90deg, transparent, var(--accent), transparent);
         }
         .modal-card .panel-copy { margin-bottom: 20px; }
-
-        /* FIX 3: noscript banner */
-        noscript .noscript-banner {
-            position: fixed; top: 0; left: 0; right: 0;
-            background: var(--red-dim); border-bottom: 1px solid var(--red);
-            color: var(--red); text-align: center;
-            padding: 12px; font-size: 13px; z-index: 9999;
-        }
     </style>
 </head>
-<body>
+<!-- FIX: data-page stays on body so app.js (document.body.dataset.page) detects it correctly -->
+<body data-page="home">
 
-    <!-- FIX 3: noscript fallback -->
-    <noscript>
-        <div class="noscript-banner">
-            JavaScript is required to use Study Buddy. Please enable it in your browser settings.
+    <nav class="topbar">
+        <div class="brand">
+            <div class="brand-mark">SB</div>
+            <div>
+                <h1 class="brand-title">Study Buddy</h1>
+                <p class="brand-subtitle">2–3 person video study rooms</p>
+            </div>
         </div>
-    </noscript>
+        <button id="signin-btn" class="btn btn-primary">Sign In</button>
+        <div id="user-profile" class="user-chip hidden">
+            <div id="user-avatar" class="avatar" aria-label="User avatar">U</div>
+            <div>
+                <div id="username-display"></div>
+                <span id="verified-badge" class="badge hidden">Verified Student</span>
+            </div>
+            <button id="signout-btn" class="btn btn-ghost">Sign Out</button>
+        </div>
+    </nav>
 
-    <!-- FIX 1: app-shell is a wrapper div, not on body -->
-    <div class="app-shell" data-page="home">
+    <main class="page">
 
-        <nav class="topbar">
-            <div class="brand">
-                <div class="brand-mark">SB</div>
+        <section id="home-dashboard" class="dashboard-panel" aria-label="Study dashboard">
+            <div class="dashboard-head">
                 <div>
-                    <h1 class="brand-title">Study Buddy</h1>
-                    <p class="brand-subtitle">2–3 person video study rooms</p>
+                    <h2 class="dashboard-title">Your Study Dashboard</h2>
+                    <p class="dashboard-copy">Track concentrated hours, completed study time, active days, and loyalty points.</p>
+                </div>
+                <span class="streak-pill" data-stat="streakLabel">0 day streak</span>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <strong data-stat="focusHours">0.00</strong>
+                    <span>Hours Concentrated</span>
+                </div>
+                <div class="stat-card">
+                    <strong data-stat="completedHours">0.00</strong>
+                    <span>Hours Completed</span>
+                </div>
+                <div class="stat-card days">
+                    <strong data-stat="studyDays">0</strong>
+                    <span>Days Studied</span>
+                </div>
+                <div class="stat-card points">
+                    <strong data-stat="loyaltyPoints">0</strong>
+                    <span>Loyalty Points</span>
                 </div>
             </div>
-            <button id="signin-btn" class="btn btn-primary">Sign In</button>
-            <div id="user-profile" class="user-chip hidden">
-                <!-- FIX 4: avatar before text so chip reads avatar → name → badge → signout -->
-                <div id="user-avatar" class="avatar" aria-label="User avatar">U</div>
+        </section>
+
+        <section class="notes-history-panel" aria-label="Notes history">
+            <div class="notes-history-head">
                 <div>
-                    <div id="username-display"></div>
-                    <span id="verified-badge" class="badge hidden">Verified Student</span>
+                    <h2 class="notes-history-title">Notes History</h2>
+                    <p class="notes-history-copy">Recently shared notes from your study rooms appear here for quick revision.</p>
                 </div>
-                <button id="signout-btn" class="btn btn-ghost">Sign Out</button>
+                <span id="notes-history-count" class="notes-count">0 notes</span>
             </div>
-        </nav>
+            <div id="notes-history-list" class="notes-history-list">
+                <div class="notes-empty">No notes yet. Share notes from a study room and they will appear here.</div>
+            </div>
+        </section>
 
-        <main class="page">
-
-            <section id="home-dashboard" class="dashboard-panel" aria-label="Study dashboard">
-                <div class="dashboard-head">
-                    <div>
-                        <h2 class="dashboard-title">Your Study Dashboard</h2>
-                        <p class="dashboard-copy">Track concentrated hours, completed study time, active days, and loyalty points.</p>
-                    </div>
-                    <span class="streak-pill" data-stat="streakLabel">0 day streak</span>
-                </div>
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <strong data-stat="focusHours">0.00</strong>
-                        <span>Hours Concentrated</span>
-                    </div>
-                    <div class="stat-card">
-                        <strong data-stat="completedHours">0.00</strong>
-                        <span>Hours Completed</span>
-                    </div>
-                    <div class="stat-card days">
-                        <strong data-stat="studyDays">0</strong>
-                        <span>Days Studied</span>
-                    </div>
-                    <div class="stat-card points">
-                        <strong data-stat="loyaltyPoints">0</strong>
-                        <span>Loyalty Points</span>
-                    </div>
-                </div>
-            </section>
-
-            <section class="notes-history-panel" aria-label="Notes history">
-                <div class="notes-history-head">
-                    <div>
-                        <h2 class="notes-history-title">Notes History</h2>
-                        <p class="notes-history-copy">Recently shared notes from your study rooms appear here for quick revision.</p>
-                    </div>
-                    <span id="notes-history-count" class="notes-count">0 notes</span>
-                </div>
-                <div id="notes-history-list" class="notes-history-list">
-                    <div class="notes-empty">No notes yet. Share notes from a study room and they will appear here.</div>
-                </div>
-            </section>
-
-            <section class="hero-grid">
-                <div class="panel">
-                    <h2 class="panel-title">Find Study Partners</h2>
-                    <p class="panel-copy">Match with students studying the same subject and start a focused video room.</p>
-                    <div class="field-stack">
-                        <!-- FIX 2: placeholder option so dropdown is never visually blank -->
-                        <select id="match-subject" data-subject-select aria-label="Select subject">
-                            <option value="" disabled selected>Select a subject...</option>
-                        </select>
-                        <button id="match-btn" class="btn btn-green">Match with Students</button>
-                        <div id="matching-status" class="status hidden">
-                            <span id="matching-message">Looking for study partners...</span>
-                            <button id="cancel-match-btn" class="btn btn-ghost">Cancel</button>
-                        </div>
-                    </div>
-                    <p class="queue-note"><span id="queue-count">0</span> students waiting in queue</p>
-                </div>
-
-                <div class="panel">
-                    <h2 class="panel-title">Private Study Room</h2>
-                    <p class="panel-copy">Create a private room or join using a room code.</p>
-                    <button id="create-room-btn" class="btn btn-primary">Create Private Room</button>
-                    <div class="divider">OR</div>
-                    <div class="join-row">
-                        <input id="join-code-input" class="input" type="text" placeholder="ROOM CODE" maxlength="6" aria-label="Room code">
-                        <button id="join-room-btn" class="btn btn-green">Join</button>
-                    </div>
-                </div>
-            </section>
-
-        </main>
-
-        <div id="auth-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
-            <div class="modal-card">
-                <h2 id="auth-modal-title" class="panel-title">Welcome to Study Buddy</h2>
-                <p class="panel-copy">Enter your details to start studying.</p>
+        <section class="hero-grid">
+            <div class="panel">
+                <h2 class="panel-title">Find Study Partners</h2>
+                <p class="panel-copy">Match with students studying the same subject and start a focused video room.</p>
                 <div class="field-stack">
-                    <input id="auth-name" class="input" type="text" placeholder="Full name" autocomplete="name">
-                    <input id="auth-email" class="input" type="email" placeholder="Email address" autocomplete="email">
-                    <button id="auth-submit" class="btn btn-primary">Start Studying</button>
-                    <button id="auth-cancel" class="btn btn-ghost">Cancel</button>
+                    <select id="match-subject" data-subject-select aria-label="Select subject">
+                        <option value="" disabled selected>Select a subject...</option>
+                    </select>
+                    <button id="match-btn" class="btn btn-green">Match with Students</button>
+                    <div id="matching-status" class="status hidden">
+                        <span id="matching-message">Looking for study partners...</span>
+                        <button id="cancel-match-btn" class="btn btn-ghost">Cancel</button>
+                    </div>
+                </div>
+                <p class="queue-note"><span id="queue-count">0</span> students waiting in queue</p>
+            </div>
+
+            <div class="panel">
+                <h2 class="panel-title">Private Study Room</h2>
+                <p class="panel-copy">Create a private room or join using a room code.</p>
+                <button id="create-room-btn" class="btn btn-primary">Create Private Room</button>
+                <div class="divider">OR</div>
+                <div class="join-row">
+                    <input id="join-code-input" class="input" type="text" placeholder="ROOM CODE" maxlength="6" aria-label="Room code">
+                    <button id="join-room-btn" class="btn btn-green">Join</button>
                 </div>
             </div>
-        </div>
+        </section>
 
-    </div><!-- end .app-shell -->
+    </main>
+
+    <div id="auth-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+        <div class="modal-card">
+            <h2 id="auth-modal-title" class="panel-title">Welcome to Study Buddy</h2>
+            <p class="panel-copy">Enter your details to start studying.</p>
+            <div class="field-stack">
+                <input id="auth-name" class="input" type="text" placeholder="Full name" autocomplete="name">
+                <input id="auth-email" class="input" type="email" placeholder="Email address" autocomplete="email">
+                <button id="auth-submit" class="btn btn-primary">Start Studying</button>
+                <button id="auth-cancel" class="btn btn-ghost">Cancel</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/static/js/app.js"></script>
 </body>
